@@ -1,0 +1,45 @@
+diff --git a/src/bin/toshi.rs b/src/bin/toshi.rs
+index 0c8065d..38907e6 100644
+--- a/src/bin/toshi.rs
++++ b/src/bin/toshi.rs
+@@ -6,9 +6,10 @@ use std::{
+ };
+ 
+ use clap::{crate_authors, crate_description, crate_version, App, Arg, ArgMatches};
+-use futures::{future, sync::oneshot, Future, Stream};
++use futures::{future, Future, Stream};
+ use log::{error, info};
+ use tokio::runtime::Runtime;
++use tokio::sync::oneshot;
+ 
+ use toshi::{
+     cluster::{self, rpc_server::RpcServer, Consul},
+diff --git a/src/cluster/placement/background.rs b/src/cluster/placement/background.rs
+index bf6f086..e71a9d0 100644
+--- a/src/cluster/placement/background.rs
++++ b/src/cluster/placement/background.rs
+@@ -1,11 +1,12 @@
+ use crate::cluster::{consul::Consul, ClusterError};
+-use futures::{sync::mpsc, try_ready, Future, Poll};
++use futures::{try_ready, Future, Poll};
+ use futures_watch::{Store, Watch};
+ use log::debug;
+ use std::collections::{HashSet, VecDeque};
+ use std::hash::Hash;
+ use std::net::SocketAddr;
+ use std::time::{Duration, Instant};
++use tokio::sync::mpsc;
+ use tokio::timer::Delay;
+ use tower_consul::ConsulService;
+ use tower_discover::Change;
+@@ -93,8 +94,8 @@ impl From<ClusterError> for Error {
+     }
+ }
+ 
+-impl From<mpsc::SendError<()>> for Error {
+-    fn from(_: mpsc::SendError<()>) -> Self {
++impl From<mpsc::error::SendError> for Error {
++    fn from(_: mpsc::error::SendError) -> Self {
+         Error::Send
+     }
+ }

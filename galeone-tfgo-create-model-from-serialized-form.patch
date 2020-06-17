@@ -1,0 +1,315 @@
+diff --git a/model.go b/model.go
+index a0b7742..c1fb0bb 100644
+--- a/model.go
++++ b/model.go
+@@ -15,6 +15,8 @@ package tfgo
+ 
+ import (
+ 	"fmt"
++	"io/ioutil"
++
+ 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
+ )
+ 
+@@ -37,6 +39,38 @@ func LoadModel(exportDir string, tags []string, options *tf.SessionOptions) (mod
+ 	return
+ }
+ 
++// ImportModel creates a new *Model, loading the graph from the serialized representation.
++// This operation creates a session with specified `options`
++// Panics if the model can't be loaded
++func ImportModel(serializedModel string, options *tf.SessionOptions) (model *Model) {
++	var err error
++	model = new(Model)
++
++	defer func() {
++		if err != nil {
++			panic(err.Error())
++		}
++	}()
++
++	contents, err := ioutil.ReadFile(serializedModel)
++	if err != nil {
++		return
++	}
++
++	graph := tf.NewGraph()
++	if err := graph.Import(contents, ""); err != nil {
++		return
++	}
++
++	session, err := tf.NewSession(graph, options)
++	if err != nil {
++		return
++	}
++
++	model.saved = &tf.SavedModel{Session: session, Graph: graph}
++	return
++}
++
+ // Exec executes the nodes/tensors that must be present in the loaded model
+ // feedDict values to feed to placeholders (that must have been saved in the model definition)
+ // panics on error
+
+From 63e38ba5705773b5e2a11cb75536bdbd1044ca8a Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Thu, 2 May 2019 10:54:25 -0300
+Subject: [PATCH 2/7] Add prefix to ImportModel
+
+---
+ model.go | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/model.go b/model.go
+index c1fb0bb..44beac5 100644
+--- a/model.go
++++ b/model.go
+@@ -42,7 +42,7 @@ func LoadModel(exportDir string, tags []string, options *tf.SessionOptions) (mod
+ // ImportModel creates a new *Model, loading the graph from the serialized representation.
+ // This operation creates a session with specified `options`
+ // Panics if the model can't be loaded
+-func ImportModel(serializedModel string, options *tf.SessionOptions) (model *Model) {
++func ImportModel(serializedModel, prefix string, options *tf.SessionOptions) (model *Model) {
+ 	var err error
+ 	model = new(Model)
+ 
+@@ -58,7 +58,7 @@ func ImportModel(serializedModel string, options *tf.SessionOptions) (model *Mod
+ 	}
+ 
+ 	graph := tf.NewGraph()
+-	if err := graph.Import(contents, ""); err != nil {
++	if err := graph.Import(contents, prefix); err != nil {
+ 		return
+ 	}
+ 
+
+From ee99f8e764e4dfec0f7a364d5c6a9ae82d8c0171 Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Thu, 2 May 2019 14:56:56 -0300
+Subject: [PATCH 3/7] Add tests for ImportModel
+
+---
+ test_models/create.py |  3 +++
+ tfgo_test.go          | 15 +++++++++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/test_models/create.py b/test_models/create.py
+index 2c90fa3..8c0c1b9 100644
+--- a/test_models/create.py
++++ b/test_models/create.py
+@@ -42,6 +42,9 @@ def main():
+         builder.add_meta_graph_and_variables(sess, ["tag"])
+         builder.save()
+ 
++        # Write the serialized form of the graph
++        tf.train.write_graph(sess.graph, 'export', 'serialized_model.pb')
++
+     return 0
+ 
+ 
+diff --git a/tfgo_test.go b/tfgo_test.go
+index 3d99984..1f75667 100644
+--- a/tfgo_test.go
++++ b/tfgo_test.go
+@@ -221,6 +221,21 @@ func TestLoadModel(t *testing.T) {
+ 	}
+ }
+ 
++func TestImportModel(t *testing.T) {
++	model := tg.ImportModel("test_models/export/serialized_model.pb", "", nil)
++
++	fakeInput, _ := tf.NewTensor([1][28][28][1]float32{})
++	results := model.Exec([]tf.Output{
++		model.Op("LeNetDropout/softmax_linear/Identity", 0),
++	}, map[tf.Output]*tf.Tensor{
++		model.Op("input_", 0): fakeInput,
++	})
++
++	if results[0].Shape()[0] != 1 || results[0].Shape()[1] != 10 {
++		t.Errorf("Expected output shape of [1,10], got %v", results[0].Shape())
++	}
++}
++
+ func TestPanicModelExec(t *testing.T) {
+ 	defer func() {
+ 		if r := recover(); r == nil {
+
+From 446d9c3c85ade767ef29c812c9c4c4657884a25c Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Fri, 3 May 2019 17:11:02 -0300
+Subject: [PATCH 4/7] Freeze the model to test the ImportModel function
+
+---
+ .travis.yml                 |  1 +
+ test_models/create.py       |  8 ++++++--
+ test_models/freeze_graph.sh | 31 +++++++++++++++++++++++++++++++
+ tfgo_test.go                |  3 +--
+ 4 files changed, 39 insertions(+), 4 deletions(-)
+ create mode 100755 test_models/freeze_graph.sh
+
+diff --git a/.travis.yml b/.travis.yml
+index 53a2c5b..13311f2 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -18,6 +18,7 @@ before_install:
+   - go get github.com/tensorflow/tensorflow/tensorflow/go
+   - pushd test_models
+   - sudo python3 create.py
++  - bash freeze_graph.sh
+   - popd
+ script:
+   - $GOPATH/bin/goveralls -service=travis-ci
+diff --git a/test_models/create.py b/test_models/create.py
+index 8c0c1b9..f69f075 100644
+--- a/test_models/create.py
++++ b/test_models/create.py
+@@ -35,15 +35,19 @@ def main():
+         # The best checkpoint path contains just one checkpoint, thus the last is the best
+         saver = tf.train.Saver()
+         saver.restore(sess, tf.train.latest_checkpoint(checkpoint_path))
+-
++       
+         # Create a builder to export the model
+         builder = tf.saved_model.builder.SavedModelBuilder("export")
+         # Tag the model in order to be capable of restoring it specifying the tag set
+         builder.add_meta_graph_and_variables(sess, ["tag"])
+         builder.save()
+ 
++        # save the checkpoint files. Those are needed to freeze the graph.
++        tf.gfile.MakeDirs("models")
++        saver.save(sess, 'models/model')
++
+         # Write the serialized form of the graph
+-        tf.train.write_graph(sess.graph, 'export', 'serialized_model.pb')
++        tf.train.write_graph(sess.graph, 'models', 'model.pb')
+ 
+     return 0
+ 
+diff --git a/test_models/freeze_graph.sh b/test_models/freeze_graph.sh
+new file mode 100755
+index 0000000..d8a68df
+--- /dev/null
++++ b/test_models/freeze_graph.sh
+@@ -0,0 +1,31 @@
++#!/bin/bash
++
++set -e
++
++TF_VERSION=r1.13
++
++MODEL='models/model.pb'
++CHECKPOINT_PATH='models/model'
++FREEZED_MODEL='export/freezed_model.pb'
++OPTIMIZED_MODEL='export/optimized_model.pb'
++INPUT_NODE='input_'
++OUTPUT_NODE='LeNetDropout/softmax_linear/Identity'
++
++# Freeze the computational graph with the variables
++wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/${TF_VERSION}/tensorflow/python/tools/freeze_graph.py"
++python freeze_graph.py --input_graph=$MODEL \
++  	--input_checkpoint=$CHECKPOINT_PATH \
++  	--output_graph=$FREEZED_MODEL \
++  	--output_node_names=$OUTPUT_NODE
++
++# Optimize the model for inference
++wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/${TF_VERSION}/tensorflow/python/tools/optimize_for_inference.py"
++python optimize_for_inference.py --input=$FREEZED_MODEL \
++	--output=$OPTIMIZED_MODEL \
++	--input_names=$INPUT_NODE  \
++	--output_names=$OUTPUT_NODE
++
++# Remove temporary files
++rm freeze_graph.py* optimize_for_inference.py* || true
++
++
+diff --git a/tfgo_test.go b/tfgo_test.go
+index 1f75667..6b1235e 100644
+--- a/tfgo_test.go
++++ b/tfgo_test.go
+@@ -222,8 +222,7 @@ func TestLoadModel(t *testing.T) {
+ }
+ 
+ func TestImportModel(t *testing.T) {
+-	model := tg.ImportModel("test_models/export/serialized_model.pb", "", nil)
+-
++	model := tg.ImportModel("test_models/export/optimized_model.pb", "", nil)
+ 	fakeInput, _ := tf.NewTensor([1][28][28][1]float32{})
+ 	results := model.Exec([]tf.Output{
+ 		model.Op("LeNetDropout/softmax_linear/Identity", 0),
+
+From fa16f85b97f587ba3c52bab2d4d495acf1606bdb Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Fri, 3 May 2019 17:25:17 -0300
+Subject: [PATCH 5/7] Install protobuf with pip in .travis.yaml
+
+---
+ .travis.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.travis.yml b/.travis.yml
+index 13311f2..b594d1e 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -11,7 +11,7 @@ before_install:
+   - sudo python3 get-pip.py
+   - popd
+   - sudo pip3 install --upgrade https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-1.12.0-cp36-cp36m-linux_x86_64.whl
+-  - sudo pip3 install dytb
++  - sudo pip3 install dytb protobuf
+   - go get github.com/mattn/goveralls
+   - curl -L "https://storage.googleapis.com/tensorflow/libtensorflow/libtensorflow-cpu-linux-x86_64-1.12.0.tar.gz" | sudo tar -C /usr/local -xz
+   - sudo ldconfig
+
+From 3f7ba878d5d2dc07e6a321edc82c75df2e8cfd54 Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Fri, 3 May 2019 17:29:28 -0300
+Subject: [PATCH 6/7] Use python3 in freeze_graph.sh
+
+---
+ test_models/freeze_graph.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/test_models/freeze_graph.sh b/test_models/freeze_graph.sh
+index d8a68df..c7330d2 100755
+--- a/test_models/freeze_graph.sh
++++ b/test_models/freeze_graph.sh
+@@ -13,14 +13,14 @@ OUTPUT_NODE='LeNetDropout/softmax_linear/Identity'
+ 
+ # Freeze the computational graph with the variables
+ wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/${TF_VERSION}/tensorflow/python/tools/freeze_graph.py"
+-python freeze_graph.py --input_graph=$MODEL \
++python3 freeze_graph.py --input_graph=$MODEL \
+   	--input_checkpoint=$CHECKPOINT_PATH \
+   	--output_graph=$FREEZED_MODEL \
+   	--output_node_names=$OUTPUT_NODE
+ 
+ # Optimize the model for inference
+ wget -q "https://raw.githubusercontent.com/tensorflow/tensorflow/${TF_VERSION}/tensorflow/python/tools/optimize_for_inference.py"
+-python optimize_for_inference.py --input=$FREEZED_MODEL \
++python3 optimize_for_inference.py --input=$FREEZED_MODEL \
+ 	--output=$OPTIMIZED_MODEL \
+ 	--input_names=$INPUT_NODE  \
+ 	--output_names=$OUTPUT_NODE
+
+From 49e2327c50d063f877ece858b8d4c7116f1eac51 Mon Sep 17 00:00:00 2001
+From: Mauri de Souza Nunes <mauri870@gmail.com>
+Date: Fri, 3 May 2019 17:42:41 -0300
+Subject: [PATCH 7/7] Fix permission issue in travis
+
+---
+ .travis.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.travis.yml b/.travis.yml
+index b594d1e..6f1cd74 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -18,7 +18,7 @@ before_install:
+   - go get github.com/tensorflow/tensorflow/tensorflow/go
+   - pushd test_models
+   - sudo python3 create.py
+-  - bash freeze_graph.sh
++  - sudo bash freeze_graph.sh
+   - popd
+ script:
+   - $GOPATH/bin/goveralls -service=travis-ci

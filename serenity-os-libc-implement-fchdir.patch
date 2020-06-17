@@ -1,0 +1,90 @@
+diff --git a/Kernel/Process.cpp b/Kernel/Process.cpp
+index 5bfa46f72..4e92dbc4e 100644
+--- a/Kernel/Process.cpp
++++ b/Kernel/Process.cpp
+@@ -1202,6 +1202,19 @@ int Process::sys$chdir(const char* path)
+     return 0;
+ }
+ 
++int Process::sys$fchdir(int fd)
++{
++    auto* description = file_description(fd);
++    if (!description)
++        return -EBADF;
++
++    if (!description->is_directory())
++   	return -ENOTDIR;
++
++    m_cwd = description->custody();
++    return 0;
++}
++
+ int Process::sys$getcwd(char* buffer, ssize_t size)
+ {
+     if (size < 0)
+diff --git a/Kernel/Process.h b/Kernel/Process.h
+index 36cbbfec0..86b2ef929 100644
+--- a/Kernel/Process.h
++++ b/Kernel/Process.h
+@@ -152,6 +152,7 @@ class Process : public InlineLinkedListNode<Process>
+     ssize_t sys$get_dir_entries(int fd, void*, ssize_t);
+     int sys$getcwd(char*, ssize_t);
+     int sys$chdir(const char*);
++    int sys$fchdir(int fd);
+     int sys$sleep(unsigned seconds);
+     int sys$usleep(useconds_t usec);
+     int sys$gettimeofday(timeval*);
+diff --git a/Kernel/Syscall.cpp b/Kernel/Syscall.cpp
+index ab4d2c1b6..d6a47b167 100644
+--- a/Kernel/Syscall.cpp
++++ b/Kernel/Syscall.cpp
+@@ -136,6 +136,8 @@ static u32 handle(RegisterDump& regs, u32 function, u32 arg1, u32 arg2, u32 arg3
+         break;
+     case Syscall::SC_chdir:
+         return current->process().sys$chdir((const char*)arg1);
++    case Syscall::SC_fchdir:
++        return current->process().sys$fchdir((int)arg1);
+     case Syscall::SC_uname:
+         return current->process().sys$uname((utsname*)arg1);
+     case Syscall::SC_set_mmap_name:
+diff --git a/Kernel/Syscall.h b/Kernel/Syscall.h
+index 49478ec61..363beb00e 100644
+--- a/Kernel/Syscall.h
++++ b/Kernel/Syscall.h
+@@ -32,6 +32,7 @@ struct timeval;
+     __ENUMERATE_SYSCALL(gettimeofday)           \
+     __ENUMERATE_SYSCALL(gethostname)            \
+     __ENUMERATE_SYSCALL(chdir)                  \
++    __ENUMERATE_SYSCALL(fchdir)                 \
+     __ENUMERATE_SYSCALL(uname)                  \
+     __ENUMERATE_SYSCALL(set_mmap_name)          \
+     __ENUMERATE_SYSCALL(readlink)               \
+diff --git a/Libraries/LibC/unistd.cpp b/Libraries/LibC/unistd.cpp
+index ff4899245..6881d2e33 100644
+--- a/Libraries/LibC/unistd.cpp
++++ b/Libraries/LibC/unistd.cpp
+@@ -265,6 +265,12 @@ int chdir(const char* path)
+     __RETURN_WITH_ERRNO(rc, rc, -1);
+ }
+ 
++int fchdir(int fd)
++{
++    int rc = syscall(SC_fchdir, fd);
++    __RETURN_WITH_ERRNO(rc, rc, -1);
++}
++
+ char* getcwd(char* buffer, size_t size)
+ {
+     if (!buffer) {
+diff --git a/Libraries/LibC/unistd.h b/Libraries/LibC/unistd.h
+index 3ae7eb163..da0d472d2 100644
+--- a/Libraries/LibC/unistd.h
++++ b/Libraries/LibC/unistd.h
+@@ -68,6 +68,7 @@ int close(int fd);
+ pid_t waitpid(pid_t, int* wstatus, int options);
+ pid_t wait(int* wstatus);
+ int chdir(const char* path);
++int fchdir(int fd);
+ char* getcwd(char* buffer, size_t size);
+ char* getwd(char* buffer);
+ int fstat(int fd, struct stat* statbuf);

@@ -1,0 +1,70 @@
+diff --git a/Libraries/LibC/stdlib.cpp b/Libraries/LibC/stdlib.cpp
+index 56ec4e91a..89cafd8e8 100644
+--- a/Libraries/LibC/stdlib.cpp
++++ b/Libraries/LibC/stdlib.cpp
+@@ -13,6 +13,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/mman.h>
++#include <sys/stat.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+ 
+@@ -278,8 +279,7 @@ char* mktemp(char* pattern)
+ {
+     int length = strlen(pattern);
+ 
+-    // FIXME: Check for an invalid template pattern and return EINVAL.
+-    if (length < 6) {
++    if (length < 6 || !String(pattern).ends_with("XXXXXX")) {
+         pattern[0] = '\0';
+         errno = EINVAL;
+         return pattern;
+@@ -302,6 +302,35 @@ char* mktemp(char* pattern)
+     return pattern;
+ }
+ 
++char* mkdtemp(char* pattern)
++{
++    int length = strlen(pattern);
++
++    if (length < 6 || !String(pattern).ends_with("XXXXXX")) {
++        errno = EINVAL;
++        return nullptr;
++    }
++
++    int start = length - 6;
++
++    static constexpr char random_characters[] = "abcdefghijklmnopqrstuvwxyz0123456789";
++
++    for (int attempt = 0; attempt < 100; ++attempt) {
++        for (int i = 0; i < 6; ++i)
++            pattern[start + i] = random_characters[(rand() % sizeof(random_characters))];
++        struct stat st;
++        int rc = lstat(pattern, &st);
++        if (rc < 0 && errno == ENOENT) {
++	    if (mkdir(pattern, 0700) < 0)
++                return nullptr;
++	    return pattern;
++	}
++    }
++
++    errno = EEXIST;
++    return nullptr;
++}
++
+ void* bsearch(const void* key, const void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*))
+ {
+     dbgprintf("FIXME(LibC): bsearch(%p, %p, %u, %u, %p)\n", key, base, nmemb, size, compar);
+diff --git a/Libraries/LibC/stdlib.h b/Libraries/LibC/stdlib.h
+index a310ee5e1..08fd255c0 100644
+--- a/Libraries/LibC/stdlib.h
++++ b/Libraries/LibC/stdlib.h
+@@ -38,6 +38,7 @@ long labs(long);
+ double atof(const char*);
+ int system(const char* command);
+ char* mktemp(char*);
++char* mkdtemp(char*);
+ void* bsearch(const void* key, const void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*));
+ 
+ #define RAND_MAX 32767

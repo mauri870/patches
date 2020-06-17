@@ -1,0 +1,50 @@
+diff --git a/src/Jenssegers/Mongodb/Schema/Blueprint.php b/src/Jenssegers/Mongodb/Schema/Blueprint.php
+index 063d5e9e..1208ed19 100644
+--- a/src/Jenssegers/Mongodb/Schema/Blueprint.php
++++ b/src/Jenssegers/Mongodb/Schema/Blueprint.php
+@@ -129,8 +129,18 @@ protected function transformColumns($indexOrColumns)
+             // Transform the columns to the index name.
+             $transform = [];
+ 
+-            foreach ($indexOrColumns as $column) {
+-                $transform[$column] = $column . '_1';
++            foreach ($indexOrColumns as $key => $value) {
++                if (is_int($key)) {
++                    // There is no sorting order, use the default.
++                    $column = $value;
++                    $sorting = '1';
++                } else {
++                    // This is a column with sorting order e.g 'my_column' => -1.
++                    $column = $key;
++                    $sorting = $value;
++                }
++
++                $transform[$column] = $column . "_" . $sorting;
+             }
+ 
+             $indexOrColumns = implode('_', $transform);
+diff --git a/tests/SchemaTest.php b/tests/SchemaTest.php
+index b28fe1c6..aa5685df 100644
+--- a/tests/SchemaTest.php
++++ b/tests/SchemaTest.php
+@@ -132,6 +132,20 @@ public function testDropIndex(): void
+         $index = $this->getIndex('newcollection', 'field_a_1_field_b_1');
+         $this->assertFalse($index);
+ 
++        Schema::collection('newcollection', function ($collection) {
++            $collection->index(['field_a' => -1, 'field_b' => 1]);
++        });
++
++        $index = $this->getIndex('newcollection', 'field_a_-1_field_b_1');
++        $this->assertNotNull($index);
++
++        Schema::collection('newcollection', function ($collection) {
++            $collection->dropIndex(['field_a' => -1, 'field_b' => 1]);
++        });
++
++        $index = $this->getIndex('newcollection', 'field_a_-1_field_b_1');
++        $this->assertFalse($index);
++
+         Schema::collection('newcollection', function ($collection) {
+             $collection->index(['field_a', 'field_b'], 'custom_index_name');
+         });

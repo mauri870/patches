@@ -1,0 +1,21 @@
+diff --git a/nginx.tmpl b/nginx.tmpl
+index c1383c6..54eb765 100644
+--- a/nginx.tmpl
++++ b/nginx.tmpl
+@@ -135,6 +135,15 @@ proxy_set_header X-Forwarded-Port $proxy_x_forwarded_port;
+ proxy_set_header Proxy "";
+ {{ end }}
+ 
++{{/* Convert nginx_* envs into nginx directives */}}
++# Dinamically added directives from environment variables
++{{ range $key, $val := $.Env }}
++{{ if hasPrefix "nginx_" $key }}
++{{ trimPrefix "nginx_" $key }} {{ $val }};
++{{ end }}
++{{ end }}
++# End directives from environment variables
++
+ {{ $enable_ipv6 := eq (or ($.Env.ENABLE_IPV6) "") "true" }}
+ server {
+ 	server_name _; # This is just an invalid value which will never trigger on a real hostname.
+
